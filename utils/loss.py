@@ -112,11 +112,13 @@ class ComputeLoss:
         self.BCEcls, self.BCEobj, self.gr, self.hyp, self.autobalance = BCEcls, BCEobj, model.gr, h, autobalance
         for k in 'na', 'nc', 'nl', 'anchors', 'nkpt':
             setattr(self, k, getattr(det, k))
+        self.no_det = self.nc + 5
 
     def __call__(self, p, targets):  # predictions, targets, model
         device = targets.device
         lcls, lbox, lobj, lkpt, lkptv = torch.zeros(1, device=device), torch.zeros(1, device=device), torch.zeros(1, device=device), torch.zeros(1, device=device), torch.zeros(1, device=device)
-        sigmas = torch.tensor([.26, .25, .25, .35, .35, .79, .79, .72, .72, .62, .62, 1.07, 1.07, .87, .87, .89, .89], device=device) / 10.0
+        # sigmas = torch.tensor([.26, .25, .25, .35, .35, .79, .79, .72, .72, .62, .62, 1.07, 1.07, .87, .87, .89, .89], device=device) / 10.0
+        sigmas = torch.tensor([1, 1, 1], device=device) / 10.0
         tcls, tbox, tkpt, indices, anchors = self.build_targets(p, targets)  # targets
 
         # Losses
@@ -136,9 +138,12 @@ class ComputeLoss:
                 lbox += (1.0 - iou).mean()  # iou loss
                 if self.kpt_label:
                     #Direct kpt prediction
-                    pkpt_x = ps[:, 6::3] * 2. - 0.5
-                    pkpt_y = ps[:, 7::3] * 2. - 0.5
-                    pkpt_score = ps[:, 8::3]
+                    # pkpt_x = ps[:, 6::3] * 2. - 0.5
+                    # pkpt_y = ps[:, 7::3] * 2. - 0.5
+                    # pkpt_score = ps[:, 8::3]
+                    pkpt_x = ps[:, self.no_det :: 3] * 2.0 - 0.5
+                    pkpt_y = ps[:, self.no_det + 1 :: 3] * 2.0 - 0.5
+                    pkpt_score = ps[:, self.no_det + 2 :: 3]
                     #mask
                     kpt_mask = (tkpt[i][:, 0::2] != 0)
                     lkptv += self.BCEcls(pkpt_score, kpt_mask.float()) 
@@ -184,7 +189,7 @@ class ComputeLoss:
         na, nt = self.na, targets.shape[0]  # number of anchors, targets
         tcls, tbox, tkpt, indices, anch = [], [], [], [], []
         if self.kpt_label:
-            gain = torch.ones(41, device=targets.device)  # normalized to gridspace gain
+            gain = torch.ones(13, device=targets.device)  # normalized to gridspace gain
         else:
             gain = torch.ones(7, device=targets.device)  # normalized to gridspace gain
         ai = torch.arange(na, device=targets.device).float().view(na, 1).repeat(1, nt)  # same as .repeat_interleave(nt)
@@ -199,11 +204,12 @@ class ComputeLoss:
         for i in range(self.nl):
             anchors = self.anchors[i]
             if self.kpt_label:
-                gain[2:40] = torch.tensor(p[i].shape)[19*[3, 2]]  # xyxy gain
+                gain[2:12] = torch.tensor(p[i].shape)[5 * [3, 2]]  # xyxy gain
             else:
                 gain[2:6] = torch.tensor(p[i].shape)[[3, 2, 3, 2]]  # xyxy gain
 
             # Match targets to anchors
+            gain = gain.long()
             t = targets * gain
             if nt:
                 # Matches
@@ -233,7 +239,15 @@ class ComputeLoss:
 
             # Append
             a = t[:, -1].long()  # anchor indices
-            indices.append((b, a, gj.clamp_(0, gain[3] - 1), gi.clamp_(0, gain[2] - 1)))  # image, anchor, grid indices
+            # indices.append((b, a, gj.clamp_(0, gain[3] - 1), gi.clamp_(0, gain[2] - 1)))  # image, anchor, grid indices
+            indices.append(
+                (
+                    b,
+                    a,
+                    gj.clamp_(0, gain[3] - 1).long(),
+                    gi.clamp_(0, gain[2] - 1).long(),
+                )
+            )
             tbox.append(torch.cat((gxy - gij, gwh), 1))  # box
             if self.kpt_label:
                 for kpt in range(self.nkpt):

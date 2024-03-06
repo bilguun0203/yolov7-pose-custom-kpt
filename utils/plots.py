@@ -94,9 +94,10 @@ def plot_skeleton_kpts(im, kpts, steps, orig_shape=None):
                         [51, 255, 51], [0, 255, 0], [0, 0, 255], [255, 0, 0],
                         [255, 255, 255]])
 
-    skeleton = [[16, 14], [14, 12], [17, 15], [15, 13], [12, 13], [6, 12],
-                [7, 13], [6, 7], [6, 8], [7, 9], [8, 10], [9, 11], [2, 3],
-                [1, 2], [1, 3], [2, 4], [3, 5], [4, 6], [5, 7]]
+    # skeleton = [[16, 14], [14, 12], [17, 15], [15, 13], [12, 13], [6, 12],
+    #             [7, 13], [6, 7], [6, 8], [7, 9], [8, 10], [9, 11], [2, 3],
+    #             [1, 2], [1, 3], [2, 4], [3, 5], [4, 6], [5, 7]]
+    skeleton = [[3, 1], [3, 2], [1, 3]]
 
     pose_limb_color = palette[[9, 9, 9, 9, 7, 7, 7, 0, 0, 0, 0, 0, 16, 16, 16, 16, 16, 16, 16]]
     pose_kpt_color = palette[[16, 16, 16, 16, 16, 0, 0, 0, 0, 0, 0, 9, 9, 9, 9, 9, 9]]
@@ -112,6 +113,16 @@ def plot_skeleton_kpts(im, kpts, steps, orig_shape=None):
                 if conf < 0.5:
                     continue
             cv2.circle(im, (int(x_coord), int(y_coord)), radius, (int(r), int(g), int(b)), -1)
+            cv2.putText(
+                im,
+                f"{kid}",
+                (int(x_coord) + 5, int(y_coord) + (10 * kid)),
+                0,
+                1,
+                [255, 50 * kid, 255],
+                thickness=4,
+                lineType=cv2.LINE_AA,
+            )
 
     for sk_id, sk in enumerate(skeleton):
         r, g, b = pose_limb_color[sk_id]
@@ -138,7 +149,7 @@ def plot_one_box_PIL(box, im, color=None, label=None, line_thickness=None):
     if label:
         fontsize = max(round(max(im.size) / 40), 12)
         font = ImageFont.truetype("Arial.ttf", fontsize)
-        txt_width, txt_height = font.getsize(label)
+        txt_width, txt_height = font.getbbox(label)[2:4]
         #draw.rectangle([box[0], box[1] - txt_height + 4, box[0] + txt_width, box[1]], fill=tuple(color))
         draw.text((box[0], box[1] - txt_height + 1), label, fill=(255, 255, 255), font=font)
     return np.asarray(im)
@@ -216,7 +227,11 @@ def plot_images(images, targets, paths=None, fname='images.jpg', names=None, max
             image_targets = targets[targets[:, 0] == i]
             boxes = xywh2xyxy(image_targets[:, 2:6]).T
             classes = image_targets[:, 1].astype('int')
-            labels = image_targets.shape[1] == 40 if kpt_label else image_targets.shape[1] == 6   # labels if no conf column
+            labels = (
+                image_targets.shape[1] == 12
+                if kpt_label
+                else image_targets.shape[1] == 6
+            )  # labels if no conf column
             conf = None if labels else image_targets[:, 6]  # check for confidence presence (label vs pred)
             if kpt_label:
                 if conf is None:
@@ -235,7 +250,7 @@ def plot_images(images, targets, paths=None, fname='images.jpg', names=None, max
             boxes[[0, 2]] += block_x
             boxes[[1, 3]] += block_y
 
-            if kpt_label and kpts.shape[1]:
+            if kpt_label and kpts.shape[1] and len(kpts) > 0:
                 if kpts.max()<1.01:
                     kpts[list(range(0,len(kpts),steps))] *=w # scale to pixels
                     kpts[list(range(1,len(kpts),steps))] *= h
@@ -248,6 +263,9 @@ def plot_images(images, targets, paths=None, fname='images.jpg', names=None, max
             for j, box in enumerate(boxes.T):
                 cls = int(classes[j])
                 color = colors(cls)
+                if names:
+                    if cls > len(names):
+                        cls = len(names) - 1
                 cls = names[cls] if names else cls
                 if labels or conf[j] > 0.1:  # 0.25 conf thresh
                     label = '%s' % cls if labels else '%s %.1f' % (cls, conf[j])
