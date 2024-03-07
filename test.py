@@ -106,7 +106,7 @@ def test(data,
     s = ('%20s' + '%12s' * 6) % ('Class', 'Images', 'Labels', 'P', 'R', 'mAP@.5', 'mAP@.5:.95')
     p, r, f1, mp, mr, map50, map, t0, t1 = 0., 0., 0., 0., 0., 0., 0., 0., 0.
     loss = torch.zeros(3, device=device)
-    jdict, stats, ap, ap_class, wandb_images = [], [], [], [], []
+    jdict, stats, ap, ap_class, wandb_images, kpt_offsets = [], [], [], [], [], []
     #jdict_kpt = [] if kpt_label else None
     for batch_i, (img, targets, paths, shapes) in enumerate(tqdm(dataloader, desc=s)):
         img = img.to(device, non_blocking=True)
@@ -166,6 +166,14 @@ def test(data,
                 if nl:
                     stats.append((torch.zeros(0, niou, dtype=torch.bool), torch.Tensor(), torch.Tensor(), tcls))
                 continue
+
+            # For keypoints distance check
+            label_kpts = labels[:, 5:].clone()
+            label_kpts /= torch.Tensor([width, height] * 3).to(device)
+            pred_kpts = torch.zeros(pred.shape[0], 6, dtype=pred.dtype).to(device)
+            pred_kpts[:, 0::2] = pred[:, 6::3].clone()
+            pred_kpts[:, 1::2] = pred[:, 7::3].clone()
+            pred_kpts /= torch.Tensor([width, height] * 3).to(device)
 
             # Predictions
             if single_cls:
@@ -256,7 +264,27 @@ def test(data,
                                 if len(detected) == nl:  # all targets already located in image
                                     break
 
-            # Append statistics (correct, conf, pcls, tcls)
+            # Keypoints distance check
+            kpt_distances = None
+            if label_kpts.shape[0] == 0:
+                kpt_distances = torch.ones(pred_kpts.shape[0], 3).to(device)
+            else:
+                kpt_distances = torch.cdist(
+                    pred_kpts.view(-1, 3, 2), label_kpts.view(-1, 3, 2)
+                )
+                kpt_distances = torch.diagonal(kpt_distances, offset=0, dim1=1, dim2=2)
+            if kpt_distances is not None:
+                kpt_check = correct[:, 4:]
+                kpt_check = kpt_check[:, 0::2] & kpt_check[:, 1::2]
+                kpt_check[torch.sum(kpt_check, dim=1) != 3] = False
+                filtered_kpt_distances = kpt_distances[kpt_check]
+                if len(kpt_offsets) == 0:
+                    kpt_offsets = filtered_kpt_distances.view(-1, 3).cpu().numpy()
+                else:
+                    kpt_offsets = np.concatenate(
+                        (kpt_offsets, filtered_kpt_distances.view(-1, 3).cpu().numpy())
+                    )
+
             stats.append((correct.cpu(), pred[:, 4].cpu(), pred[:, 5].cpu(), tcls))
 
         # Plot images
@@ -291,6 +319,14 @@ def test(data,
     t = tuple(x / seen * 1E3 for x in (t0, t1, t0 + t1)) + (imgsz, imgsz, batch_size)  # tuple
     if not training:
         print('Speed: %.1f/%.1f/%.1f ms inference/NMS/total per %gx%g image at batch-size %g' % t)
+
+    dist_thresh = 0.0156  # 0.0156=10px/640px
+    kpts_inrange = []
+    print("Keypoints (within 10px):")
+    for kpt_i in range(kpt_offsets.shape[1]):
+        inrange = np.sum(kpt_offsets[:, kpt_i] < dist_thresh)
+        kpts_inrange.append(inrange)
+        print(f"\t{kpt_i}: {inrange}/{nt[0]} ({inrange/nt[0]})")
 
     # Plots
     if plots:

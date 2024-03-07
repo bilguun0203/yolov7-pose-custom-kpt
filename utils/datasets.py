@@ -361,7 +361,7 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
         self.stride = stride
         self.path = path
         self.kpt_label = kpt_label
-        self.flip_index = [0, 2, 1]
+        self.flip_index = [0, 1, 2]
 
         try:
             f = []  # image files
